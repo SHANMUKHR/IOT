@@ -1,0 +1,147 @@
+#include <ESP8266WiFi.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHT.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+#define DHTPIN D4
+DHT dht(DHTPIN, DHT11);
+
+String apiKey = "3251B8PWM2L35PA3";
+const char *ssid = "HEMANTH 1605";
+const char *pass = "987654321";
+const char* server = "api.thingspeak.com";
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const int AirValue = 498;
+const int WaterValue = 211;
+const int SensorPin = A0;
+int soilMoistureValue = 0;
+int soilmoisturepercent = 0;
+int relaypin = D5;
+
+WiFiClient client;
+
+void setup() {
+  Serial.begin(115200);
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+  pinMode(relaypin, OUTPUT);
+
+  dht.begin();
+
+  WiFi.begin(ssid, pass);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  delay(4000);
+}
+
+void loop() {
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+
+  Serial.print("Humidity: ");
+  Serial.println(h);
+  Serial.print("Temperature: ");
+  Serial.println(t);
+
+  soilMoistureValue = analogRead(SensorPin);
+  Serial.println(soilMoistureValue);
+
+  soilmoisturepercent = map(soilMoistureValue, AirValue, WaterValue, 0, 100);
+
+  if (soilmoisturepercent >= 0 && soilmoisturepercent <= 100) {
+    Serial.print("Soil Moisture Percent: ");
+    Serial.println(soilmoisturepercent);
+    Serial.print("Relay Pin: ");
+    Serial.println(relaypin);
+
+    // Control the relay based on soil moisture
+    if (soilmoisturepercent <= 30) {
+      digitalWrite(relaypin, LOW); // Turn ON relay (activate motor)
+      Serial.println("Motor is ON");
+    } else {
+      digitalWrite(relaypin, HIGH); // Turn OFF relay (deactivate motor)
+      Serial.println("Motor is OFF");
+    }
+
+    // Display data on OLED
+    displayData("Soil RH:", String(soilmoisturepercent), "Air RH:", h, "Temp:", t);
+    delay(250);
+    display.clearDisplay();
+
+    // Send data to ThingSpeak
+    sendDataToThingSpeak(soilmoisturepercent, h, t);
+  } else {
+    Serial.println("Invalid soil moisture reading");
+  }
+
+  delay(1000); // Delay for 10 seconds before the next iteration
+}
+
+void displayData(String line1, String value1, String line2, float value2, String line3, float value3) {
+  display.setCursor(0, 0);
+  display.setTextSize(2);
+  display.setTextColor(WHITE);
+  display.print(line1);
+  display.setTextSize(1);
+  display.print(value1);
+  display.println(" %");
+
+  display.setCursor(0, 20);
+  display.setTextSize(2);
+  display.print(line2);
+  display.setTextSize(1);
+  display.print(value2);
+  display.println(" %");
+
+  display.setCursor(0, 40);
+  display.setTextSize(2);
+  display.print(line3);
+  display.setTextSize(1);
+  display.print(value3);
+  display.println(" C");
+
+  display.display();
+}
+
+void sendDataToThingSpeak(int moisture, float humidity, float temperature) {
+  if (client.connect(server, 80)) {
+    String postStr = apiKey;
+    postStr += "&field1=";
+    postStr += String(moisture);
+    postStr += "&field2=";
+    postStr += String(humidity);
+    postStr += "&field3=";
+    postStr += String(temperature);
+    postStr += "&field4=";
+    postStr += String(relaypin);
+    postStr += "\r\n\r\n\r\n\r\n";
+
+    client.print("POST /update HTTP/1.1\n");
+    client.print("Host: api.thingspeak.com\n");
+    client.print("Connection: close\n");
+    client.print("X-THINGSPEAKAPIKEY: " + apiKey + "\n");
+    client.print("Content-Type: application/x-www-form-urlencoded\n");
+    client.print("Content-Length: ");
+    client.print(postStr.length());
+    client.print("\n\n");
+    client.print(postStr);
+  } else {
+    Serial.println("Failed to connect to ThingSpeak");
+  }
+
+  client.stop();
+}
